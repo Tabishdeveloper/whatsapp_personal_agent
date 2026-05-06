@@ -1,0 +1,262 @@
+WhatsApp AI Secretary
+Agent — Developer Brief
+Antigravity Build Spec  |  v1.0  |  April 2026
+Project
+WA AI Secretary Agent
+Owner
+Danish
+Team
+Antigravity
+Version
+v1.0
+1. Project Overview
+This document is the complete build specification for Danish's WhatsApp AI Secretary Agent. The agent monitors incoming WhatsApp messages from a defined allowlist of contacts. If Danish does not reply within 5 minutes, the agent activates, classifies the message against existing chat history, and sends an appropriate secretary-style reply automatically.
+The agent is not a chatbot — it is a personal secretary. Replies are always short, human, and contextually aware. It should be indistinguishable from a real human assistant.
+1.1 Core Behaviour
+Messages from non-allowlisted contacts are silently ignored
+Every incoming message from an allowed contact starts a 5-minute countdown timer
+If Danish replies manually within 5 minutes — timer is cancelled, his reply is saved to history
+If the timer fires — the agent classifies the message and sends a reply
+Voice notes are transcribed via Whisper before processing
+Images trigger an instant acknowledgement reply (no timer, no AI)
+1.2 Reply Classification Logic
+When the 5-minute timer fires, the agent runs through this decision tree:
+Condition
+Reply Type
+Example Reply
+Message matches chat history context
+Direct contextual reply
+"Will confirm the time with him and let you know"
+New/unrelated message, first occurrence
+Busy / holding reply
+"Danish is a bit tied up, will get back to you shortly!"
+Follow-up after busy reply
+Gentle acknowledgement
+"Noted! Will pass it along"
+Image received
+Instant acknowledgement
+"Got your image, will check shortly!"
+Voice note received
+Transcribe then classify
+Follows text classification after transcription
+2. System Architecture
+The system runs as a single Node.js process. It uses whatsapp-web.js (Puppeteer-based) to connect to WhatsApp Web, Supabase for persistent chat history, Claude for AI reply generation, and OpenAI Whisper for voice transcription.
+2.1 File Structure
+whatsapp-agent/
+├── index.js          Main entry — WA client + event routing
+├── agent.js          Claude AI — context detection + reply generation
+├── timer.js          Per-contact 5-minute timer manager
+├── transcribe.js     OpenAI Whisper voice note transcription
+├── db.js             Supabase helpers — saveMessage / getHistory
+├── config.js         Allowlist, owner number, persona prompt
+├── schema.sql        Supabase table definition
+├── .env              API keys (never commit)
+└── package.json      Dependencies
+2.2 Tech Stack
+Layer
+Technology
+Purpose
+WhatsApp Interface
+whatsapp-web.js
+Connect to WA Web, listen for messages, send replies
+AI Replies
+Anthropic Claude (claude-opus-4-5)
+Context detection + secretary reply generation
+AI Classification
+Anthropic Claude (claude-haiku-4-5)
+Fast/cheap YES/NO context match check
+Voice Transcription
+OpenAI Whisper (whisper-1)
+Convert voice notes to text before processing
+Database
+Supabase (PostgreSQL)
+Persistent per-contact chat history storage
+Audio Conversion
+ffmpeg (system dependency)
+Convert WhatsApp .ogg to .mp3 for Whisper
+Runtime
+Node.js 18+
+Process runtime
+Env Config
+dotenv
+Manage API keys securely
+3. Data Flow
+3.1 Incoming Message Flow
+Message arrives → type check → allowlist check → timer starts → owner replies? cancel timer : agent fires → classify → reply → save to DB
+#
+Step
+Detail
+1
+Message received (index.js)
+whatsapp-web.js fires the message event with msg object
+2
+Type check
+Image/sticker → instant reply, skip. Voice → transcribe. Text → proceed.
+3
+Allowlist check
+msg.from checked against ALLOWED_CONTACTS in config.js — silently skip if not found
+4
+Timer scheduled (timer.js)
+scheduleReply() sets a 5-min setTimeout per contactId — resets if they message again
+5
+Owner reply detection (index.js)
+message_create event with fromMe=true → cancelTimer() + saveOwnerReply()
+6
+Timer fires → agent.js
+generateSecretaryReply() is called with contactId + message text
+7
+Load history (db.js)
+getHistory() fetches last 20 messages for contactId from Supabase
+8
+Save incoming (db.js)
+saveMessage() writes the new user message to Supabase before reply
+9
+Context check (agent.js)
+Claude Haiku checks last 6 history messages vs new message → YES or NO
+10
+Reply generation (agent.js)
+Claude Opus generates reply using appropriate system prompt and history
+11
+Save reply (db.js)
+saveMessage() writes assistant reply to Supabase
+12
+Send reply (index.js)
+client.sendMessage() delivers reply via WhatsApp
+4. Database — Supabase
+4.1 Schema
+Run the following SQL in your Supabase SQL Editor to create the required table:
+CREATE TABLE IF NOT EXISTS chat_history (
+    id          BIGSERIAL PRIMARY KEY,
+    contact_id  TEXT        NOT NULL,
+    role        TEXT        NOT NULL CHECK (role IN ('user', 'assistant')),
+    content     TEXT        NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_history_contact_created
+    ON chat_history (contact_id, created_at DESC);
+contact_id format: countrycode+phonenumber@c.us — e.g. 923001234567@c.us. No + sign, no spaces, no dashes.
+4.2 Supabase Setup Steps
+Create a new Supabase project at supabase.com
+Go to Project Settings → API — copy the Project URL and service_role key
+Go to SQL Editor → paste and run schema.sql
+Paste the URL and key into your .env file
+5. Configuration
+5.1 Environment Variables (.env)
+Variable
+Required
+Description
+SUPABASE_URL
+Yes
+Your Supabase project URL
+SUPABASE_KEY
+Yes
+Supabase service_role key (not anon key)
+ANTHROPIC_API_KEY
+Yes
+Anthropic Claude API key
+OPENAI_API_KEY
+Yes
+OpenAI key for Whisper transcription
+SESSION_PATH
+No
+Path for WA session files (default: ./sessions)
+5.2 config.js — Allowlist & Owner Number
+Edit config.js before running. Two required fields:
+const OWNER_NUMBER = '923001234567@c.us';  // YOUR number
+const ALLOWED_CONTACTS = [
+    '923009876543@c.us',   // Contact 1
+    '923001112222@c.us',   // Contact 2
+];
+To find a contact's correct ID: in the running agent, log msg.from when a message arrives — that is the exact string to use.
+6. Setup & Run
+6.1 Prerequisites
+Node.js 18+
+ffmpeg installed on the host machine
+Ubuntu/Debian: sudo apt install ffmpeg
+macOS: brew install ffmpeg
+Supabase project with schema.sql applied
+All API keys ready (Anthropic, OpenAI, Supabase)
+6.2 Installation
+# 1. Clone or copy the whatsapp-agent folder
+cd whatsapp-agent
+# 2. Install dependencies
+npm install
+# 3. Set up environment
+cp .env.example .env
+# Fill in all keys in .env
+# 4. Edit config.js
+# Set OWNER_NUMBER and ALLOWED_CONTACTS
+# 5. Run
+npm start
+First run will show a QR code. Scan it once with WhatsApp. After that, the session persists in ./sessions and no re-scanning is needed unless the session expires.
+6.3 Dependencies (package.json)
+@anthropic-ai/sdk — Claude API
+@supabase/supabase-js — Supabase database client
+openai — Whisper transcription
+whatsapp-web.js — WhatsApp Web automation
+dotenv — Environment variable management
+qrcode-terminal — QR display in terminal
+7. AI Prompt Reference
+The agent uses three distinct system prompts depending on the classification result. These are defined in agent.js and can be tuned to match Danish's communication style more closely.
+7.1 Context Match — Direct Reply Prompt
+Used when: new message relates to existing chat history. Model: claude-opus-4-5. Max tokens: 150.
+Key instructions: short and direct (max 2 sentences), match language of incoming message, sound human not robotic, use history for relevant context.
+7.2 No Context — Busy Reply Prompt
+Used when: message has no relation to history AND contact has not yet received a busy reply. Model: claude-opus-4-5. Max tokens: 150.
+Key instructions: holding message under 15 words, sound human, match language. Examples: "Danish is a bit tied up, will get back to you shortly!"
+7.3 Follow-up — Gentle Acknowledgement Prompt
+Used when: contact messages again after already receiving a busy reply. Model: claude-opus-4-5. Max tokens: 150.
+Key instructions: under 10 words, warm acknowledgement, match language. Examples: "Noted! Will pass it along", "Got it, he will check shortly"
+7.4 Context Classification (Haiku)
+Used for: YES/NO decision on whether new message matches history. Model: claude-haiku-4-5. Max tokens: 10. Cost: ~$0.0001 per check.
+Passes last 6 messages from history + new message. Expects only "YES" or "NO" in response. If history is empty, defaults to false (no context match).
+8. Cost Estimate
+Based on typical personal messaging volume. All figures are approximate.
+Operation
+Cost per call
+Est. daily calls
+Daily cost
+Haiku context check
+~$0.0001
+30
+~$0.003
+Opus reply generation
+~$0.003
+15
+~$0.045
+Whisper transcription
+~$0.002
+5 voice notes
+~$0.01
+Total
+~$0.06 / day
+Estimated monthly cost: ~$1.80. Context sharing is far cheaper than fine-tuning, which would cost hundreds of dollars per training run and cannot adapt in real-time.
+9. Future Enhancements
+Items not in v1.0 but easy to add:
+Import existing WhatsApp chat history
+Export chat as .txt from WhatsApp → parse with a one-time import script → bulk insert into Supabase
+Dynamic allowlist management
+Add/remove contacts via WhatsApp command (!allow, !block) instead of editing config.js
+Timer duration control
+Make the 5-minute delay configurable per contact or via environment variable
+Pausing the agent
+WhatsApp command (!pause, !resume) to temporarily disable auto-replies
+Read receipts / typing indicator
+Send a typing indicator before the reply to feel more human
+Multi-language persona tuning
+Fine-tune system prompts for Roman Urdu vs English vs formal Urdu separately
+n8n logging integration
+Forward each agent reply to n8n webhook for dashboarding or notifications
+Web dashboard
+Simple React UI to view chat history per contact, toggle contacts, review agent replies
+10. Questions & Handoff
+This brief was prepared by Danish for the Antigravity development team. All source files are included alongside this document. For any questions during implementation:
+Owner
+Danish
+Team
+Antigravity
+Version
+v1.0 — April 2026
+Source files
+index.js, agent.js, timer.js, transcribe.js, db.js, config.js, schema.sql
+Start by setting up Supabase (schema.sql), filling .env, and updating OWNER_NUMBER + ALLOWED_CONTACTS in config.js. Then npm install && npm start.
