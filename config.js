@@ -4,12 +4,12 @@
 
 // Your WhatsApp number in the format: countrycode+number@c.us
 // No +, no spaces, no dashes. Example: '923001234567@c.us'
-const OWNER_NUMBER = '92123456789@c.us'; // owner whatsapp number 
+const OWNER_NUMBER = '923287599043@c.us'; // owner whatsapp number 
 
 // WhatsApp IDs of contacts the agent will respond to.
 // To find a contact's ID: check the console log of msg.from when they message you.
 const ALLOWED_CONTACTS = [
-    '92123456789@c.us',  // Jhon Doe
+    '923129851916@c.us',  // Jhon Doe
 ];
 
 // How many minutes to wait before the agent fires a reply
