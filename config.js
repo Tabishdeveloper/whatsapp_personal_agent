@@ -13,6 +13,7 @@ const ALLOWED_CONTACTS = [
 ];
 
 // How many minutes to wait before the agent fires a reply
+
 const REPLY_DELAY_MINUTES = 1;
 
 // How many past messages to load for context
